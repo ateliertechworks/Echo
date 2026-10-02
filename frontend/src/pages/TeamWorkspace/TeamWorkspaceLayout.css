@@ -1,0 +1,13 @@
+.workspace { display: flex; flex-direction: column; }
+.ws-hero {
+  padding: 20px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.ws-hero-main { min-width: 0; }
+@media (max-width: 640px) {
+  .ws-hero { padding: 16px; }
+}
