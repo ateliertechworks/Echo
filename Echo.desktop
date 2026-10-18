@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Echo
+Comment=AI-assisted daily team reporting
+Exec=Echo
+Terminal=false
+Categories=Office;Utility;
