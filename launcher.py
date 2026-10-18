@@ -28,9 +28,9 @@ def show_error(title: str, text: str) -> None:
     QMessageBox.critical(None, title, text)
 
 
-def command_output(command: list[str]) -> tuple[int, str]:
+def command_output(command: list[str], cwd: Path | None = None) -> tuple[int, str]:
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=10, cwd=cwd)
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
         return 1, str(exc)
     return result.returncode, (result.stdout + result.stderr).strip()
@@ -49,20 +49,38 @@ def compose_command() -> list[str] | None:
 
 
 def ensure_runtime_files() -> Path:
+    global POSTGRES_PORT
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     env_file = DATA_DIR / ".env"
     if not env_file.exists():
-        env_file.write_text(
-            "POSTGRES_USER=teamreport\n"
-            "POSTGRES_PASSWORD=change-me-strong\n"
-            "POSTGRES_DB=teamreport\n"
-            f"POSTGRES_PORT={POSTGRES_PORT}\n"
-            f"DATABASE_URL=postgresql://teamreport:change-me-strong@localhost:{POSTGRES_PORT}/teamreport\n"
-            "OLLAMA_URL=http://localhost:11434/api/generate\n"
-            f"OLLAMA_MODEL={MODEL}\n",
-            encoding="utf-8",
+        template = Path(__file__).resolve().parent / ".env.example"
+        if template.is_file():
+            contents = template.read_text(encoding="utf-8")
+        else:
+            contents = (
+                "POSTGRES_USER=teamreport\n"
+                "POSTGRES_PASSWORD=change-me-strong\n"
+                "POSTGRES_DB=teamreport\n"
+                "POSTGRES_PORT=5432\n"
+                "DATABASE_URL=postgresql://teamreport:change-me-strong@localhost:5432/teamreport\n"
+                "OLLAMA_URL=http://localhost:11434/api/generate\n"
+                "OLLAMA_MODEL=qwen3:1.7b\n"
+            )
+        code, secret = command_output(["openssl", "rand", "-hex", "32"])
+        if code != 0 or not secret:
+            raise RuntimeError("OpenSSL is required to generate the Echo database password.")
+        contents = contents.replace("POSTGRES_PASSWORD=change-me-strong", f"POSTGRES_PASSWORD={secret}")
+        contents = contents.replace(
+            "DATABASE_URL=postgresql://teamreport:change-me-strong@localhost:5432/teamreport",
+            f"DATABASE_URL=postgresql://teamreport:{secret}@localhost:{POSTGRES_PORT}/teamreport",
         )
+        env_file.write_text(contents, encoding="utf-8")
+        env_file.chmod(0o600)
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        if line.startswith("POSTGRES_PORT="):
+            POSTGRES_PORT = int(line.partition("=")[2].strip())
+            break
     os.environ["ECHO_DATA_DIR"] = str(DATA_DIR)
     os.environ["POSTGRES_PORT"] = str(POSTGRES_PORT)
     return env_file
@@ -93,12 +111,53 @@ def check_docker() -> list[str] | None:
     return compose
 
 
+def database_port_details() -> str:
+    details = []
+    port = str(POSTGRES_PORT)
+    code, containers = command_output(
+        ["docker", "ps", "--filter", f"publish={port}", "--format", "{{.Names}}"]
+    )
+    if code == 0 and containers:
+        details.append("Docker containers: " + containers)
+    for command in ((["ss", "-ltnp", "sport", "=", f":{port}"]), (["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"])):
+        if shutil.which(command[0]):
+            code, output = command_output(command)
+            if code == 0 and output:
+                details.append(output)
+                break
+    return "\n".join(details) or "The process could not be identified."
+
+
+def database_port_is_available() -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", POSTGRES_PORT), timeout=0.5):
+            own_code, own_container = command_output([
+                "docker", "ps", "--filter", "label=com.docker.compose.project=echo",
+                "--filter", "label=com.docker.compose.service=db", "--format", "{{.Names}}",
+            ])
+            if own_code == 0 and own_container:
+                return True
+            show_error(
+                "PostgreSQL port is already in use",
+                f"Echo needs host port {POSTGRES_PORT}, but another process or container is using it.\n\n"
+                f"{database_port_details()}\n\nStop that application or configure Echo with another POSTGRES_PORT, then try again."
+            )
+            return False
+    except OSError:
+        return True
+
+
 def start_postgres(compose: list[str], env_file: Path) -> bool:
+    if not database_port_is_available():
+        return False
+    compose_file = DATA_DIR / "docker-compose.yml"
+    if not compose_file.is_file():
+        compose_file = resource_path("docker-compose.yml")
     command = compose + [
-        "--env-file", str(env_file), "-f", str(resource_path("docker-compose.yml")),
+        "--env-file", str(env_file), "-f", str(compose_file),
         "-p", "echo", "up", "-d", "db",
     ]
-    code, details = command_output(command)
+    code, details = command_output(command, cwd=compose_file.parent)
     if code != 0:
         show_error("PostgreSQL could not start", f"Docker Compose failed:\n\n{details[-1200:]}")
         return False

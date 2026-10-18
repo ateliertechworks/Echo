@@ -5,11 +5,16 @@ APP_NAME="Echo"
 MODEL="qwen3:1.7b"
 OLLAMA_MIN_VERSION="0.6.5"
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_DIR="$HOME/.local/share/Echo"
-LOG_DIR="$INSTALL_DIR/logs"
-DESKTOP_DIR="$HOME/.local/share/applications"
+ACTUAL_USER="${SUDO_USER:-$(id -un)}"
+USER_HOME="$(getent passwd "$ACTUAL_USER" | cut -d: -f6)"
+[[ -n "$USER_HOME" ]] || USER_HOME="$HOME"
+INSTALL_ROOT="$USER_HOME/.local/share/Echo"
+APP_DIR="$INSTALL_ROOT/Echo"
+APP_EXECUTABLE="$APP_DIR/Echo"
+LOG_DIR="$INSTALL_ROOT/logs"
+DESKTOP_DIR="$USER_HOME/.local/share/applications"
 DESKTOP_FILE="$DESKTOP_DIR/echo.desktop"
-EXECUTABLE="$INSTALL_DIR/Echo"
+ENV_FILE="$INSTALL_ROOT/.env"
 DOCKER_GROUP_ADDED=0
 OLLAMA_BIN=""
 
@@ -80,10 +85,10 @@ setup_docker() {
   sudo systemctl enable --now docker
   systemctl is-active --quiet docker || fail "Docker service could not be started."
 
-  if [[ " $(id -nG "$USER") " != *" docker "* ]]; then
-    sudo usermod -aG docker "$USER"
+  if [[ " $(id -nG "$ACTUAL_USER") " != *" docker "* ]]; then
+    sudo usermod -aG docker "$ACTUAL_USER"
     DOCKER_GROUP_ADDED=1
-    printf '\nDocker group access was added for %s.\n' "$USER"
+    printf '\nDocker group access was added for %s.\n' "$ACTUAL_USER"
     printf 'Log out and log back in before starting Echo so Docker can be accessed without sudo.\n'
   fi
 }
@@ -191,23 +196,38 @@ setup_model() {
 }
 
 install_echo() {
-  [[ -f "$SOURCE_DIR/dist/Echo" ]] || fail "Built executable not found at $SOURCE_DIR/dist/Echo."
-  [[ -x "$SOURCE_DIR/dist/Echo" ]] || fail "$SOURCE_DIR/dist/Echo is not executable."
+  [[ -d "$SOURCE_DIR/dist/Echo" ]] || fail "PyInstaller directory not found at $SOURCE_DIR/dist/Echo."
+  [[ -f "$SOURCE_DIR/dist/Echo/Echo" ]] || fail "Echo executable not found at $SOURCE_DIR/dist/Echo/Echo."
+  [[ -x "$SOURCE_DIR/dist/Echo/Echo" ]] || fail "$SOURCE_DIR/dist/Echo/Echo is not executable."
   [[ -f "$SOURCE_DIR/docker-compose.yml" ]] || fail "docker-compose.yml was not found."
-  [[ -d "$SOURCE_DIR/echo_app/db/migrations" ]] || fail "Database migrations were not found."
+  [[ -d "$SOURCE_DIR/migrations" ]] || fail "Database migrations were not found."
+  [[ -d "$SOURCE_DIR/assets" ]] || fail "Application assets were not found."
+  [[ -f "$SOURCE_DIR/.env.example" ]] || fail ".env.example was not found."
 
-  info "Installing Echo into $INSTALL_DIR"
-  mkdir -p "$INSTALL_DIR" "$LOG_DIR" "$DESKTOP_DIR"
-  install -m 755 "$SOURCE_DIR/dist/Echo" "$EXECUTABLE"
-  install -m 644 "$SOURCE_DIR/docker-compose.yml" "$INSTALL_DIR/docker-compose.yml"
-  rm -rf "$INSTALL_DIR/migrations" "$INSTALL_DIR/assets"
-  cp -a "$SOURCE_DIR/echo_app/db/migrations" "$INSTALL_DIR/migrations"
-  if [[ -d "$SOURCE_DIR/echo_app/assets" ]]; then
-    cp -a "$SOURCE_DIR/echo_app/assets" "$INSTALL_DIR/assets"
+  info "Installing Echo into $APP_DIR"
+  mkdir -p "$INSTALL_ROOT" "$LOG_DIR" "$DESKTOP_DIR"
+  local staged_app="$INSTALL_ROOT/.Echo.new.$$"
+  rm -rf "$staged_app"
+  cp -a "$SOURCE_DIR/dist/Echo" "$staged_app"
+  [[ -f "$staged_app/Echo" && -x "$staged_app/Echo" ]] || fail "Staged Echo executable is invalid."
+  rm -rf "$APP_DIR"
+  mv "$staged_app" "$APP_DIR"
+
+  install -m 644 "$SOURCE_DIR/docker-compose.yml" "$INSTALL_ROOT/docker-compose.yml"
+  rm -rf "$INSTALL_ROOT/migrations" "$INSTALL_ROOT/assets"
+  cp -a "$SOURCE_DIR/migrations" "$INSTALL_ROOT/migrations"
+  cp -a "$SOURCE_DIR/assets" "$INSTALL_ROOT/assets"
+  [[ -f "$INSTALL_ROOT/assets/icon.svg" ]] || fail "Installed Echo icon was not found."
+  if [[ ! -f "$ENV_FILE" ]]; then
+    install -m 600 "$SOURCE_DIR/.env.example" "$ENV_FILE"
+    local db_password
+    db_password="$(openssl rand -hex 32)"
+    sed -i \
+      -e "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$db_password/" \
+      -e "s#^DATABASE_URL=.*#DATABASE_URL=postgresql://teamreport:$db_password@localhost:5432/teamreport#" \
+      "$ENV_FILE"
   fi
-  if [[ -f "$SOURCE_DIR/.env.example" ]]; then
-    install -m 644 "$SOURCE_DIR/.env.example" "$INSTALL_DIR/.env.example"
-  fi
+  [[ -f "$APP_EXECUTABLE" && -x "$APP_EXECUTABLE" ]] || fail "Installed Echo executable was not found at $APP_EXECUTABLE."
 }
 
 create_desktop_entry() {
@@ -217,17 +237,24 @@ create_desktop_entry() {
 Type=Application
 Name=Echo
 Comment=AI-assisted daily team reporting
-Exec=$EXECUTABLE
+Exec=$APP_EXECUTABLE
 Terminal=false
+Icon=$INSTALL_ROOT/assets/icon.svg
 Categories=Office;Utility;
 EOF
   chmod 644 "$DESKTOP_FILE"
+  [[ -x "$APP_EXECUTABLE" ]] || fail "Desktop launcher target does not exist: $APP_EXECUTABLE"
+  [[ -f "$INSTALL_ROOT/assets/icon.svg" ]] || fail "Desktop launcher icon does not exist: $INSTALL_ROOT/assets/icon.svg"
+  if command -v desktop-file-validate >/dev/null 2>&1; then
+    desktop-file-validate "$DESKTOP_FILE" || fail "Desktop launcher validation failed."
+  fi
 }
 
 main() {
   check_linux
   check_internet
   check_sudo
+  require_command openssl
   install_system_packages
   setup_docker
   mkdir -p "$INSTALL_DIR" "$LOG_DIR"
@@ -237,7 +264,7 @@ main() {
   create_desktop_entry
 
   printf '\nEcho installation completed.\n'
-  printf 'Open Echo from applications menu or run %s\n' "$EXECUTABLE"
+  printf 'Open Echo from applications menu or run %s\n' "$APP_EXECUTABLE"
   if [[ "$DOCKER_GROUP_ADDED" == "1" ]]; then
     printf 'Important: log out and log back in before starting Echo so Docker group access takes effect.\n'
   fi

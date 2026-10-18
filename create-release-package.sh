@@ -21,6 +21,7 @@ require_command() {
 require_command bash
 require_command tar
 require_command sha256sum
+require_command docker
 
 cd "$ROOT_DIR"
 info "Validating installer syntax"
@@ -41,6 +42,7 @@ required_files=(
 required_directories=(
   echo_app/db/migrations
   echo_app/assets
+  dist/Echo
 )
 
 for path in "${required_files[@]}"; do
@@ -49,7 +51,9 @@ done
 for path in "${required_directories[@]}"; do
   [[ -d "$path" ]] || fail "Required directory is missing: $path"
 done
-[[ -x dist/Echo ]] || fail "Built executable is not executable: dist/Echo"
+[[ -f dist/Echo/Echo ]] || fail "PyInstaller executable is missing: dist/Echo/Echo"
+[[ -x dist/Echo/Echo ]] || fail "Built executable is not executable: dist/Echo/Echo"
+[[ -d dist/Echo/_internal ]] || fail "PyInstaller _internal directory is missing: dist/Echo/_internal"
 
 rm -f "$ARCHIVE_PATH" "$CHECKSUMS_PATH"
 info "Creating $ARCHIVE_PATH"
@@ -65,6 +69,8 @@ tar -czf "$ARCHIVE_PATH" \
   dist/Echo \
   docker-compose.yml \
   Echo.desktop \
+  --transform='s,^echo_app/db/migrations,migrations,' \
+  --transform='s,^echo_app/assets,assets,' \
   echo_app/db/migrations \
   echo_app/assets \
   .env.example \
@@ -75,6 +81,21 @@ info "Creating $CHECKSUMS_PATH"
   cd "$ROOT_DIR"
   sha256sum "$(basename "$ARCHIVE_PATH")" >"$(basename "$CHECKSUMS_PATH")"
 )
+
+  VERIFY_DIR="$(mktemp -d)"
+  cleanup() {
+    rm -rf "$VERIFY_DIR"
+  }
+  trap cleanup EXIT
+  info "Verifying extracted release package"
+  tar -xzf "$ARCHIVE_PATH" -C "$VERIFY_DIR"
+  [[ -f "$VERIFY_DIR/dist/Echo/Echo" ]] || fail "Extracted Echo executable is missing."
+  [[ -x "$VERIFY_DIR/dist/Echo/Echo" ]] || fail "Extracted Echo executable is not executable."
+  [[ -d "$VERIFY_DIR/dist/Echo/_internal" ]] || fail "Extracted PyInstaller _internal directory is missing."
+  [[ -d "$VERIFY_DIR/migrations" ]] || fail "Extracted migrations are missing."
+  [[ -d "$VERIFY_DIR/assets" ]] || fail "Extracted assets are missing."
+  docker compose --env-file "$VERIFY_DIR/.env.example" \
+    -f "$VERIFY_DIR/docker-compose.yml" config --quiet
 
 info "Release package created"
 printf '  %s\n  %s\n' "$ARCHIVE_PATH" "$CHECKSUMS_PATH"

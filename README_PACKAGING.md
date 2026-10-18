@@ -18,8 +18,10 @@ The script runs `build_linux.sh`, checks every required input, creates:
 - `Echo-Linux-Installer.tar.gz`
 - `SHA256SUMS`
 
-The archive contains the executable, installer, Docker Compose file, desktop
-entry, migrations, assets, `.env.example`, and this documentation. It does not
+The archive contains the complete `dist/Echo` PyInstaller onedir tree, installer,
+production Docker Compose file, desktop entry, migrations, assets, `.env.example`,
+and this documentation. The installed executable is
+`~/.local/share/Echo/Echo/Echo`. It does not
 include `.env`, passwords, database files, logs, `__pycache__`, `.git`, or
 development virtual environments. The script never uploads or publishes files.
 
@@ -32,7 +34,7 @@ Echo-Linux-Installer.tar.gz
 SHA256SUMS
 ```
 
-Choose a release tag, for example `v1.0.0`. The tag must match the `VERSION`
+Choose a release tag, for example `v1.0.1`. The tag must match the `VERSION`
 value in `install-echo.sh`.
 
 ## Configure the one-line installer
@@ -42,7 +44,7 @@ At the top of `install-echo.sh`, replace:
 ```bash
 OWNER="OWNER"
 REPOSITORY="REPOSITORY"
-VERSION="v1.0.0"
+VERSION="v1.0.1"
 ```
 
 with the GitHub owner, repository name, and release tag. For example:
@@ -50,7 +52,7 @@ with the GitHub owner, repository name, and release tag. For example:
 ```bash
 OWNER="harsha"
 REPOSITORY="Echo"
-VERSION="v1.0.0"
+VERSION="v1.0.1"
 ```
 
 Commit and push `install-echo.sh` after changing these values. Do not publish a
