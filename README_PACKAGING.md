@@ -34,7 +34,7 @@ Echo-Linux-Installer.tar.gz
 SHA256SUMS
 ```
 
-Choose a release tag, for example `v1.0.1`. The tag must match the `VERSION`
+Choose a release tag, for example `v1.0.2`. The tag must match the `ECHO_RELEASE_VERSION`
 value in `install-echo.sh`.
 
 ## Configure the one-line installer
@@ -44,7 +44,7 @@ At the top of `install-echo.sh`, replace:
 ```bash
 OWNER="OWNER"
 REPOSITORY="REPOSITORY"
-VERSION="v1.0.1"
+ECHO_RELEASE_VERSION="v1.0.2"
 ```
 
 with the GitHub owner, repository name, and release tag. For example:
@@ -52,7 +52,7 @@ with the GitHub owner, repository name, and release tag. For example:
 ```bash
 OWNER="harsha"
 REPOSITORY="Echo"
-VERSION="v1.0.1"
+ECHO_RELEASE_VERSION="v1.0.2"
 ```
 
 Commit and push `install-echo.sh` after changing these values. Do not publish a

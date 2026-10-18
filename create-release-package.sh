@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ECHO_RELEASE_VERSION="v1.0.2"
 ARCHIVE_PATH="$ROOT_DIR/Echo-Linux-Installer.tar.gz"
 CHECKSUMS_PATH="$ROOT_DIR/SHA256SUMS"
 
@@ -27,6 +28,10 @@ cd "$ROOT_DIR"
 info "Validating installer syntax"
 bash -n Echo_Linux_Installer.sh
 bash -n install-echo.sh
+grep -Fq "ECHO_RELEASE_VERSION=\"$ECHO_RELEASE_VERSION\"" install-echo.sh \
+  || fail "install-echo.sh does not target release $ECHO_RELEASE_VERSION"
+grep -Fq "$ECHO_RELEASE_VERSION" README_PACKAGING.md \
+  || fail "README_PACKAGING.md does not document release $ECHO_RELEASE_VERSION"
 
 info "Building dist/Echo"
 bash build_linux.sh

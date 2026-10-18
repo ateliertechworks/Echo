@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 APP_NAME="Echo"
 MODEL="qwen3:1.7b"
@@ -34,9 +34,9 @@ require_command() {
 check_linux() {
   [[ "$(uname -s)" == "Linux" ]] || fail "Echo can only be installed on Linux."
   if [[ -r /etc/os-release ]]; then
-    # shellcheck disable=SC1091
-    . /etc/os-release
-    [[ "${ID:-}" == "ubuntu" ]] || fail "Echo is supported by this installer on Ubuntu only."
+    local os_id
+    os_id="$(. /etc/os-release; printf '%s' "${ID:-}")"
+    [[ "$os_id" == "ubuntu" ]] || fail "Echo is supported by this installer on Ubuntu only."
   else
     fail "Cannot identify the Linux distribution."
   fi
@@ -257,7 +257,7 @@ main() {
   require_command openssl
   install_system_packages
   setup_docker
-  mkdir -p "$INSTALL_DIR" "$LOG_DIR"
+  mkdir -p "$INSTALL_ROOT" "$LOG_DIR"
   install_ollama
   setup_model
   install_echo
@@ -270,4 +270,6 @@ main() {
   fi
 }
 
-main "$@"
+if [[ "${ECHO_INSTALLER_TEST:-0}" != "1" ]]; then
+  main "$@"
+fi
