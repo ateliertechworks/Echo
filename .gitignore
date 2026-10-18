@@ -8,3 +8,5 @@ dist/
 *.log
 .DS_Store
 .env.example
+node_modules/
+frontend/dev-dist/
