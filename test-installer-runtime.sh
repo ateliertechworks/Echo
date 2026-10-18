@@ -7,10 +7,18 @@ cd "$ROOT_DIR"
 VERSION="sentinel"
 ECHO_INSTALLER_TEST=1 source "$ROOT_DIR/install-echo.sh"
 check_platform
-[[ "$ECHO_RELEASE_VERSION" == "v1.0.2" ]] || {
+[[ "$ECHO_RELEASE_VERSION" == "v1.0.3" ]] || {
   printf 'Unexpected Echo release: %s\n' "$ECHO_RELEASE_VERSION" >&2
   exit 1
 }
+
+grep -Fq 'timeout --foreground 600' Echo_Linux_Installer.sh || exit 1
+grep -Fq 'timeout --foreground 300' Echo_Linux_Installer.sh || exit 1
+grep -Fq 'docker compose' Echo_Linux_Installer.sh || exit 1
+grep -Fq 'setup_database' Echo_Linux_Installer.sh || exit 1
+grep -Fq 'timeout=300' launcher.py || grep -Fq 'timeout=300,' launcher.py || grep -Fq 'timeout=300' launcher.py || exit 1
+grep -Fq 'range(60)' launcher.py || exit 1
+grep -Fq 'time.sleep(2)' launcher.py || exit 1
 [[ "$VERSION" == "sentinel" ]] || {
   printf 'OS detection overwrote VERSION\n' >&2
   exit 1

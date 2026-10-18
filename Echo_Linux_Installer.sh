@@ -17,6 +17,7 @@ DESKTOP_FILE="$DESKTOP_DIR/echo.desktop"
 ENV_FILE="$INSTALL_ROOT/.env"
 DOCKER_GROUP_ADDED=0
 OLLAMA_BIN=""
+DOCKER_COMPOSE=(docker compose)
 
 info() {
   printf '\n[Echo installer] %s\n' "$1"
@@ -88,6 +89,7 @@ setup_docker() {
   if [[ " $(id -nG "$ACTUAL_USER") " != *" docker "* ]]; then
     sudo usermod -aG docker "$ACTUAL_USER"
     DOCKER_GROUP_ADDED=1
+    DOCKER_COMPOSE=(sudo docker compose)
     printf '\nDocker group access was added for %s.\n' "$ACTUAL_USER"
     printf 'Log out and log back in before starting Echo so Docker can be accessed without sudo.\n'
   fi
@@ -230,6 +232,74 @@ install_echo() {
   [[ -f "$APP_EXECUTABLE" && -x "$APP_EXECUTABLE" ]] || fail "Installed Echo executable was not found at $APP_EXECUTABLE."
 }
 
+database_compose_args() {
+  printf '%s\n' "${DOCKER_COMPOSE[@]}" --env-file "$ENV_FILE" -f "$INSTALL_ROOT/docker-compose.yml" -p echo
+}
+
+docker_inspect() {
+  if [[ "${DOCKER_COMPOSE[0]}" == "sudo" ]]; then
+    sudo docker inspect "$@"
+  else
+    docker inspect "$@"
+  fi
+}
+
+database_diagnostics() {
+  local compose_args
+  mapfile -t compose_args < <(database_compose_args)
+  printf '\nCompose status:\n'
+  "${compose_args[@]}" ps || true
+  printf '\nPostgreSQL logs (last 100 lines):\n'
+  "${compose_args[@]}" logs --tail 100 db || true
+}
+
+wait_for_database() {
+  local compose_args container_id health attempt
+  mapfile -t compose_args < <(database_compose_args)
+  for ((attempt = 1; attempt <= 60; attempt++)); do
+    container_id="$("${compose_args[@]}" ps -q db 2>/dev/null || true)"
+    health=""
+    if [[ -n "$container_id" ]]; then
+      health="$(docker_inspect --format '{{.State.Health.Status}}' "$container_id" 2>/dev/null || true)"
+    fi
+    if [[ "$health" == "healthy" ]]; then
+      info "PostgreSQL is healthy"
+      return 0
+    fi
+    printf '\r[Echo installer] Waiting for PostgreSQL health (%d/60)' "$attempt"
+    sleep 2
+  done
+  printf '\n'
+  database_diagnostics
+  fail "PostgreSQL did not become healthy within 120 seconds."
+}
+
+setup_database() {
+  local compose_args pull_status up_status
+  mapfile -t compose_args < <(database_compose_args)
+  info "Downloading the PostgreSQL image (up to 10 minutes on first launch)"
+  set +e
+  timeout --foreground 600 "${compose_args[@]}" pull db
+  pull_status=$?
+  set -e
+  if [[ "$pull_status" -ne 0 ]]; then
+    database_diagnostics
+    fail "PostgreSQL image download failed or timed out."
+  fi
+
+  info "Starting PostgreSQL"
+  set +e
+  timeout --foreground 300 "${compose_args[@]}" up -d db
+  up_status=$?
+  set -e
+  if [[ "$up_status" -ne 0 ]]; then
+    database_diagnostics
+    fail "PostgreSQL could not be started."
+  fi
+  info "Waiting for PostgreSQL to become healthy (up to 120 seconds)"
+  wait_for_database
+}
+
 create_desktop_entry() {
   info "Creating desktop launcher"
   cat >"$DESKTOP_FILE" <<EOF
@@ -261,6 +331,7 @@ main() {
   install_ollama
   setup_model
   install_echo
+  setup_database
   create_desktop_entry
 
   printf '\nEcho installation completed.\n'

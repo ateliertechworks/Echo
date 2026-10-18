@@ -4,7 +4,7 @@ set -Eeuo pipefail
 # Replace these values before publishing the installer.
 OWNER="ateliertechworks"
 REPOSITORY="Echo"
-ECHO_RELEASE_VERSION="v1.0.2"
+ECHO_RELEASE_VERSION="v1.0.3"
 
 ARCHIVE_NAME="Echo-Linux-Installer.tar.gz"
 CHECKSUMS_NAME="SHA256SUMS"

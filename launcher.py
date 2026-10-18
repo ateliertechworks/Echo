@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 
+from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import QApplication, QMessageBox, QProgressDialog
 
 
@@ -28,9 +29,9 @@ def show_error(title: str, text: str) -> None:
     QMessageBox.critical(None, title, text)
 
 
-def command_output(command: list[str], cwd: Path | None = None) -> tuple[int, str]:
+def command_output(command: list[str], cwd: Path | None = None, timeout: int = 10) -> tuple[int, str]:
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=10, cwd=cwd)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout, cwd=cwd)
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
         return 1, str(exc)
     return result.returncode, (result.stdout + result.stderr).strip()
@@ -147,41 +148,116 @@ def database_port_is_available() -> bool:
         return True
 
 
+class PostgresStartupWorker(QObject):
+    progress = Signal(int)
+    message = Signal(str)
+    finished = Signal(bool, str)
+
+    def __init__(self, compose: list[str], env_file: Path, compose_file: Path) -> None:
+        super().__init__()
+        self.compose = compose
+        self.env_file = env_file
+        self.compose_file = compose_file
+
+    def compose_base_command(self) -> list[str]:
+        return self.compose + [
+            "--env-file", str(self.env_file), "-f", str(self.compose_file), "-p", "echo",
+        ]
+
+    def diagnostics(self) -> str:
+        base = self.compose_base_command()
+        _, status = command_output(base + ["ps"])
+        _, logs = command_output(base + ["logs", "--tail", "100", "db"])
+        return f"Compose status:\n{status[-800:]}\n\nPostgreSQL logs:\n{logs[-1200:]}"
+
+    def health_status(self) -> str:
+        code, output = command_output(self.compose_base_command() + ["ps", "-q", "db"])
+        container_id = output.splitlines()[-1].strip() if code == 0 and output else ""
+        if not container_id:
+            return ""
+        code, output = command_output(
+            ["docker", "inspect", "--format", "{{.State.Health.Status}}", container_id]
+        )
+        return output.strip() if code == 0 else ""
+
+    def failure_message(self, details: str, timed_out: bool = False) -> str:
+        lowered = details.lower()
+        if timed_out or "timed out" in lowered or "timeout" in lowered:
+            category = "Docker timed out while downloading or starting PostgreSQL."
+        elif "permission denied" in lowered or "permission" in lowered or "docker.sock" in lowered:
+            category = "Docker permission error. Add your user to the docker group or start Echo with Docker access."
+        elif "address already in use" in lowered or "port is already allocated" in lowered:
+            category = f"PostgreSQL port {POSTGRES_PORT} is already in use."
+        else:
+            category = "PostgreSQL did not become healthy."
+        return f"{category}\n\n{details[-2200:]}"
+
+    def run(self) -> None:
+        base = self.compose_base_command()
+        if self.health_status() == "healthy":
+            self.message.emit("Echo's PostgreSQL database is already healthy.")
+            self.finished.emit(True, "")
+            return
+
+        self.message.emit("Starting PostgreSQL. The first launch may take several minutes.")
+        command = base + ["up", "-d", "db"]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=300, cwd=self.compose_file.parent)
+            details = (result.stdout + result.stderr).strip()
+            if result.returncode != 0:
+                self.finished.emit(False, self.failure_message(details + "\n\n" + self.diagnostics()))
+                return
+        except subprocess.TimeoutExpired as exc:
+            details = (exc.stdout or "") + (exc.stderr or "")
+            self.finished.emit(False, self.failure_message(details + "\n\n" + self.diagnostics(), timed_out=True))
+            return
+        except (FileNotFoundError, OSError) as exc:
+            self.finished.emit(False, self.failure_message(str(exc) + "\n\n" + self.diagnostics()))
+            return
+
+        for attempt in range(60):
+            health = self.health_status()
+            self.progress.emit(attempt + 1)
+            if health == "healthy":
+                self.finished.emit(True, "")
+                return
+            time.sleep(2)
+        self.finished.emit(False, self.failure_message(self.diagnostics()))
+
+
 def start_postgres(compose: list[str], env_file: Path) -> bool:
-    if not database_port_is_available():
-        return False
     compose_file = DATA_DIR / "docker-compose.yml"
     if not compose_file.is_file():
         compose_file = resource_path("docker-compose.yml")
-    command = compose + [
-        "--env-file", str(env_file), "-f", str(compose_file),
-        "-p", "echo", "up", "-d", "db",
-    ]
-    code, details = command_output(command, cwd=compose_file.parent)
-    if code != 0:
-        show_error("PostgreSQL could not start", f"Docker Compose failed:\n\n{details[-1200:]}")
+    if not database_port_is_available():
         return False
 
-    progress = QProgressDialog("Waiting for PostgreSQL to become ready...", "Cancel", 0, 60)
+    progress = QProgressDialog("Starting PostgreSQL. The first launch may take several minutes.", "Cancel", 0, 60)
     progress.setWindowTitle("Starting Echo")
     progress.setAutoClose(False)
     progress.setValue(0)
     progress.show()
-    ready = False
-    for attempt in range(60):
+    thread = QThread()
+    worker = PostgresStartupWorker(compose, env_file, compose_file)
+    result: list[tuple[bool, str]] = []
+    worker.progress.connect(progress.setValue)
+    worker.message.connect(progress.setLabelText)
+    worker.finished.connect(lambda ready, details: result.append((ready, details)))
+    worker.finished.connect(thread.quit)
+    worker.finished.connect(worker.deleteLater)
+    thread.finished.connect(thread.deleteLater)
+    worker.moveToThread(thread)
+    thread.started.connect(worker.run)
+    thread.start()
+    while thread.isRunning():
         QApplication.processEvents()
         if progress.wasCanceled():
-            break
-        try:
-            with socket.create_connection(("127.0.0.1", POSTGRES_PORT), timeout=1):
-                ready = True
-                break
-        except OSError:
-            time.sleep(1)
-            progress.setValue(attempt + 1)
+            progress.setLabelText("Waiting for PostgreSQL startup to finish...")
+        time.sleep(0.05)
+    ready, details = result[0] if result else (False, "PostgreSQL startup stopped unexpectedly.")
     progress.close()
     if not ready:
-        show_error("PostgreSQL is not ready", "Echo could not connect to PostgreSQL on localhost. Check Docker and try again.")
+        show_error("PostgreSQL startup failed", details)
     return ready
 
 

@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ECHO_RELEASE_VERSION="v1.0.2"
+ECHO_RELEASE_VERSION="v1.0.3"
 ARCHIVE_PATH="$ROOT_DIR/Echo-Linux-Installer.tar.gz"
 CHECKSUMS_PATH="$ROOT_DIR/SHA256SUMS"
 
