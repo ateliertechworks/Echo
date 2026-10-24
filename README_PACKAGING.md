@@ -34,7 +34,7 @@ Echo-Linux-Installer.tar.gz
 SHA256SUMS
 ```
 
-Choose the release tag `v1.0.3`. The tag must match the `ECHO_RELEASE_VERSION`
+Choose the release tag `v1.0.4`. The tag must match the `ECHO_RELEASE_VERSION`
 value in `install-echo.sh`.
 
 ## Configure the one-line installer
@@ -44,7 +44,7 @@ At the top of `install-echo.sh`, replace:
 ```bash
 OWNER="OWNER"
 REPOSITORY="REPOSITORY"
-ECHO_RELEASE_VERSION="v1.0.3"
+ECHO_RELEASE_VERSION="v1.0.4"
 ```
 
 with the GitHub owner, repository name, and release tag. For example:
@@ -52,7 +52,7 @@ with the GitHub owner, repository name, and release tag. For example:
 ```bash
 OWNER="harsha"
 REPOSITORY="Echo"
-ECHO_RELEASE_VERSION="v1.0.3"
+ECHO_RELEASE_VERSION="v1.0.4"
 ```
 
 Commit and push `install-echo.sh` after changing these values. Do not publish a
@@ -83,7 +83,12 @@ that the installer:
 2. Installs or upgrades Ollama to a Qwen3-compatible version.
 3. Downloads `qwen3:1.7b`.
 4. Creates the Echo application launcher.
-5. Starts Echo from the applications menu.
+5. Starts Echo automatically and makes it available from the applications menu.
+
+The installer configures Docker access for the logged-in user and the generated
+launcher applies that access immediately. The user does not need to run Docker
+or PostgreSQL commands manually, and does not need to log out before opening
+Echo.
 
 For a syntax-only check before publishing:
 

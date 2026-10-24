@@ -7,7 +7,7 @@ cd "$ROOT_DIR"
 VERSION="sentinel"
 ECHO_INSTALLER_TEST=1 source "$ROOT_DIR/install-echo.sh"
 check_platform
-[[ "$ECHO_RELEASE_VERSION" == "v1.0.3" ]] || {
+[[ "$ECHO_RELEASE_VERSION" == "v1.0.4" ]] || {
   printf 'Unexpected Echo release: %s\n' "$ECHO_RELEASE_VERSION" >&2
   exit 1
 }
@@ -29,6 +29,7 @@ check_linux
 [[ "$INSTALL_ROOT" == "$HOME/.local/share/Echo" ]] || exit 1
 [[ "$APP_DIR" == "$INSTALL_ROOT/Echo" ]] || exit 1
 [[ "$APP_EXECUTABLE" == "$HOME/.local/share/Echo/Echo/Echo" ]] || exit 1
+[[ "$APP_LAUNCHER" == "$HOME/.local/share/Echo/launch-echo.sh" ]] || exit 1
 
 stale_variable="INSTALL""_DIR"
 if grep -n "$stale_variable" install-echo.sh Echo_Linux_Installer.sh create-release-package.sh; then

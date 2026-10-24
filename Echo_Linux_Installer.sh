@@ -11,6 +11,7 @@ USER_HOME="$(getent passwd "$ACTUAL_USER" | cut -d: -f6)"
 INSTALL_ROOT="$USER_HOME/.local/share/Echo"
 APP_DIR="$INSTALL_ROOT/Echo"
 APP_EXECUTABLE="$APP_DIR/Echo"
+APP_LAUNCHER="$INSTALL_ROOT/launch-echo.sh"
 LOG_DIR="$INSTALL_ROOT/logs"
 DESKTOP_DIR="$USER_HOME/.local/share/applications"
 DESKTOP_FILE="$DESKTOP_DIR/echo.desktop"
@@ -90,8 +91,7 @@ setup_docker() {
     sudo usermod -aG docker "$ACTUAL_USER"
     DOCKER_GROUP_ADDED=1
     DOCKER_COMPOSE=(sudo docker compose)
-    printf '\nDocker group access was added for %s.\n' "$ACTUAL_USER"
-    printf 'Log out and log back in before starting Echo so Docker can be accessed without sudo.\n'
+    printf '\nDocker access was configured for %s.\n' "$ACTUAL_USER"
   fi
 }
 
@@ -230,6 +230,19 @@ install_echo() {
       "$ENV_FILE"
   fi
   [[ -f "$APP_EXECUTABLE" && -x "$APP_EXECUTABLE" ]] || fail "Installed Echo executable was not found at $APP_EXECUTABLE."
+  cat >"$APP_LAUNCHER" <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if id -nG "\$(id -un)" | tr ' ' '\n' | grep -Fxq docker; then
+  exec "$APP_EXECUTABLE" "\$@"
+fi
+command -v sg >/dev/null 2>&1 || {
+  printf 'Echo needs Docker access. Please restart your session and try again.\\n' >&2
+  exit 1
+}
+exec sg docker -c "exec \$(printf '%q' "$APP_EXECUTABLE") \$(printf '%q ' "\$@")"
+EOF
+  chmod 755 "$APP_LAUNCHER"
 }
 
 database_compose_args() {
@@ -307,13 +320,13 @@ create_desktop_entry() {
 Type=Application
 Name=Echo
 Comment=AI-assisted daily team reporting
-Exec=$APP_EXECUTABLE
+Exec=$APP_LAUNCHER
 Terminal=false
 Icon=$INSTALL_ROOT/assets/icon.svg
 Categories=Office;Utility;
 EOF
   chmod 644 "$DESKTOP_FILE"
-  [[ -x "$APP_EXECUTABLE" ]] || fail "Desktop launcher target does not exist: $APP_EXECUTABLE"
+  [[ -x "$APP_LAUNCHER" ]] || fail "Desktop launcher target does not exist: $APP_LAUNCHER"
   [[ -f "$INSTALL_ROOT/assets/icon.svg" ]] || fail "Desktop launcher icon does not exist: $INSTALL_ROOT/assets/icon.svg"
   if command -v desktop-file-validate >/dev/null 2>&1; then
     desktop-file-validate "$DESKTOP_FILE" || fail "Desktop launcher validation failed."
@@ -335,10 +348,8 @@ main() {
   create_desktop_entry
 
   printf '\nEcho installation completed.\n'
-  printf 'Open Echo from applications menu or run %s\n' "$APP_EXECUTABLE"
-  if [[ "$DOCKER_GROUP_ADDED" == "1" ]]; then
-    printf 'Important: log out and log back in before starting Echo so Docker group access takes effect.\n'
-  fi
+  printf 'Starting Echo. It will also be available from the applications menu.\n'
+  nohup "$APP_LAUNCHER" >>"$LOG_DIR/echo.log" 2>&1 &
 }
 
 if [[ "${ECHO_INSTALLER_TEST:-0}" != "1" ]]; then
